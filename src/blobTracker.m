@@ -1,0 +1,237 @@
+% *********************************************************************
+%                                                                   
+%   Funkcja: blobTracker                                     
+%                                                                   
+%   Przeznaczenie:                                                  
+%       Funkcja œledzi obiekty zlokalizowane na kolejnych klatkach filmu.
+%       W ramach œledzenia zostaj¹ w odpowiedni sposób przeniesione do
+%       obiektów z klatki aktualnej informacje o iloœci osób stanowi¹cych
+%       obiekt w klatce poprzedniej.
+%       Dzia³anie polega na przeanalizowaniu informacji z dwóch kolejnych
+%       klatek filmu. Celem jest skojarzenie obiektów z klatki aktualnej z
+%       obiektami z klatki poprzedniej. Skojarzenie oznacza, ¿e s¹ to te
+%       same, czêœciowo przesuniête obiekty.
+%       Obiekty z dwóch kolejnych klatek filmu zostaj¹
+%       uznane za ten sam, przemieszczaj¹cy siê obiekt, 
+%       je¿eli znaczne ich czêœci siê pokrywaj¹.
+%       Funkcja musi byæ wywo³ywana po kolei, dla ka¿dej klatki filmu, zaczynaj¹c
+%       od drugiej.
+
+%   Argumenty funkcji:
+%       X           - Macierz o wymiarach [m n] - aktualnie przetwarzana 
+%                     klatka filmu, otrzymana po przetworzeniu i posegmentowaniu.
+%                     Ka¿dy obiekt jak i t³o musz¹ mieæ inny odzieñ szaroœci.
+%       Xprev       - Poprzednia klatka filmu o wymogach j.w.
+%       grain       - Tablica stuktur zawieraj¹cych informacje o ka¿dym z
+%                     obiektów znalezionych w aktualnej klatce. 
+%                     Rozmiar tablicy odpowiada iloœci obiektów otrzymanych
+%                     w wyniku segmentacji.
+%       prevGrain   - Tablica struktur znalezionych w poprzedniej klatce.
+%       config      - Struktura zawieraj¹ce informacje konfigracyjne
+%                     algorytmu zliczania osób                       
+%                                                                   
+%   Funkcja zwraca:                                                 
+%       newGraindata    - Tablica struktur zawieraj¹cych informacje o ka¿dym z obiektów znalezionych w aktualnej klatce.
+%                         W odró¿nieniu od zmiennej wejœciowej "grain",
+%                         "newGraindata" jest struktur¹ poszerzon¹ -
+%                         zawiera szereg informacji dodatkowych
+%       numOfDeadBubbles    - Iloœæ ludzi sk³adaj¹cych siê na obiekty,
+%                             których œledzenie zosta³o
+%                             zakoñczone w aktualnej klatce. W praktyce jest to iloœæ osób która
+%                             w porównaniu do klatki poprzedniej zesz³a z pola widzenia
+%                                                                   
+%   Uzywane funkcje:                                                
+%       blobTrackerGutek korzysta z podstawowych funkcji œrodowiska MatLab, 
+%       g³ównie operuj¹cych na macierzach i liczbach.                            
+%                                                                   
+%   Uzywane zmienne:                                                
+%       m_wspolnosci    - "Macierz wspólnoœci", przechowuj¹ca informacjê o tym w jakim
+%                         stopniu obiekty z klatki aktualnej odpowiadaj¹ obiektom z klatki
+%                         poprzedniej (nak³adaj¹ siê).
+%                         Ka¿dy wiersz odpowiada kolejnemu obiektowi z
+%                         klatki poprzedniej, ka¿da kolumna obiektowi z
+%                         klatki aktualnej. Indeks wiersza/kolumny pokrywa
+%                         siê z indeksem obiektu z klatki
+%                         poprzedniej/aktualnej.
+%                         Element o wspó³rzêdnych i,j jest liczb¹
+%                         okreœlaj¹c¹ wspóln¹ powierzchniê (wyra¿on¹ w
+%                         pikselach): i-tego obiektu z klatki poprzedniej,
+%                         oraz j-tego obiektu z klatki aktualnej.
+%       numOfPrevs      - Iloœæ obiektów na klatce poprzedniej
+%                         (iloœæ wierszy macierzy "m_wspolnosci")
+%       numOfActs       - Iloœæ obiektów na klatce aktualnej
+%                         (iloœæ kolumn macierzy "m_wspolnosci")
+%       newX            - Klatka (macierz) powsta³a z po³¹czania klatek X oraz prevX
+%                         Wartoœæ ka¿dego piksela jednoznacznie okreœla czy
+%                         jest to:
+%                         a) t³o w obrazie X oraz prevX
+%                         b) tylko czêœæ i-tego obiektu z prevX lub
+%                            tylko czêœæ j-tego obiektu z X
+%                         c) jednoczeœnie i-ty obiekt z prevX oraz j-ty
+%                            obiekt z X (na³o¿one obiekty)
+%       koloryPrev      - Tablica zawieraj¹ca liczby odpowiadaj¹ce
+%                         odcieniom szaroœci kolejnych obiektów z poprzedniej klatki
+%                         (d³ugoœæ talbicy jest równa iloœci wierszy
+%                         macierzy m_wspolnosci).
+%                         Zmienna potrzebna do utworzenia "m_wspolnosci".
+%       kolory          - Tablica zawieraj¹ca liczby odpowiadaj¹ce
+%                         odcieniom szaroœci kolejnych obiektów z aktualnej klatki
+%                         (d³ugoœæ talbicy jest równa iloœci kolumn
+%                         macierzy m_wspolnosci).
+%                         Zmienna potrzebna do utworzenia "m_wspolnosci".
+%                                                                                              
+%                                                                   
+%   Autor:                                                          
+%       Pawe³ Gutowski
+% 
+%                                                                   
+%   Ostatnia modyfikacja:                                           
+%       07.01.2007 r.            
+%                                                                   
+% *********************************************************************
+
+
+function [newGraindata, numOfDeadBubbles] = blobTrackerGutek( X, Xprev, grain, prevGrain, config)
+
+% Inicjalizacja zmiennych
+numOfDeadBubbles = 0;
+numOfPrevs = size(prevGrain);
+numOfPrevs = numOfPrevs(1);
+numOfActs = size(grain);
+numOfActs = numOfActs(1);
+m_wspolnosci = zeros(numOfPrevs,numOfActs );
+newX = uint32(256*uint32(X) + uint32(Xprev));
+
+% Inicjalizacja tablic koloryPrev oraz kolory
+for i = 1:numOfPrevs
+    lista = prevGrain(i).PixelList;
+    wsp = lista(1,:);
+    koloryPrev(i) = uint32(Xprev(wsp(2), wsp(1)));
+end
+for i = 1:numOfActs
+    lista = grain(i).PixelList;
+    wsp = lista(1,:);
+    kolory(i) = uint32(X(wsp(2), wsp(1)));
+end
+
+% Tworzymy macierz m_wspolnosci.
+% Uzywamy do tego stworzonych wczesniej zmiennych:
+% kolory, koloryPrev, newX
+for i = 1:numOfPrevs     %dla ka¿dego b¹bla z poprzredniej klatki
+    for j = 1:numOfActs    %z ka¿dym b¹blem z tej klatki
+        count = size(find(newX == 256*kolory(j) + koloryPrev(i)));
+        count = count(1);
+        m_wspolnosci(i, j) = count;
+    end
+end
+
+%Dwie poni¿sze pêtle s¹ odpowiedzialne za "inteligentne" przeniesienie
+%informacji z klatki poprzedniej do klatki aktualnej.
+%Je¿eli np dwa obiekty siê po³¹czy³y w jeden, to wiadomo, ¿e na nowy obiekt
+%sk³ada siê dwoje œledzonych ludzi.
+
+%Zerujemy iloœæ ludzi w b¹blach otrzyman¹ od b¹bli z poprzedniej klatki
+for i=1:numOfActs
+    grain(i).numOfPeople = double(0);
+    grain(i).age = double(0);
+end
+
+% Rozdzielamy ludzi sk³adaj¹cych siê na obiekty z klatki poprzedniej
+% pomiêdzy obiekty z klatki aktualnej
+% Iloœæ "prekazywanych" ludzi jest proporcjonalna do powierzchni pokrycia z
+% nowym obiektem.
+for i=1:numOfPrevs
+    sumWspolnosci = sum(m_wspolnosci(i,:)');
+    numOfPeopleToGive = prevGrain(i).numOfPeople;
+    if sumWspolnosci > 0           %czyli, ze stary b¹bel ma komu przekazaæ swoich ludzi
+        for j=1:numOfActs
+            if sumWspolnosci > 0
+                k_float =  (numOfPeopleToGive * m_wspolnosci(i,j)) / sumWspolnosci;     %ilosc ludzi, ktora wraz z bablem przeszla do innego babla
+                k = int32(k_float); 
+                grain(j).numOfPeople = double(grain(j).numOfPeople + k);            %zwiekszamy ilosc ludzi w nowotowrzonym b¹blu
+                sumWspolnosci = sumWspolnosci - m_wspolnosci(i,j);
+                numOfPeopleToGive = numOfPeopleToGive - k;                  %skoro z babla "j" przekazano "k" ludzi do b¹bla "i", to do rozdysponowania mamy o "k" ludzi mniej
+                if k > 0                                                    %Je¿eli do nowego b¹bla zosta³a przekazana niezerowa iloœæ osób, to znaczy, ¿e ten b¹bel ma czas ¿ycia taki, jak najstarszy z jego 'potomków'
+                    grain(j).age = max(grain(j).age, prevGrain(i).age);
+                end
+            end
+        end 
+    else                %b¹bel ginie [czy tak?]
+        if prevGrain(i).age >= config.minAge            %jezeli wlasnie umierajacy b¹bel pojawi³ siê na filmie d³u¿ej ni¿ minimalna iloœæ klatek
+            numOfDeadBubbles = numOfDeadBubbles + uint8(config.wagaPrzenikania * prevGrain(i).numOfPeople...
+                                                + config.wagaKsztaltu * prevGrain(i).AverageNumOfPeopleShape...
+                                                + config.wagaPola * prevGrain(i).AverageNumOfPeopleArea);
+        end
+    end
+end
+
+%je¿eli jakis nowy b¹bel nie dosta³ w spadku ani jednego cz³owieka, to
+%znaczy, ¿e dopiero powsta³, wiêc niesie w sobie przynajmniej jednego
+%cz³owieka
+for i=1:numOfActs
+    
+    if grain(i).numOfPeople == 0
+        grain(i).numOfPeople = 1;
+    end 
+    grain(i).age = grain(i).age + 1;   %inkrementujemy czas ¿ycia b¹bla  
+end
+
+% W tej pêtli poszerzamy struktury odpowiadaj¹ce obiektom z aktualnej
+% klatki o informacje wydobyte z zale¿noœci miêdzy dwoma kolejnymi
+% klatkami.
+% Struktury te s¹ pozamykane w tablicy "grain"
+for i = 1:numOfActs
+    id = i;
+    prevId = find(m_wspolnosci(:,i));
+    [numS, numA] = shapeCoef(grain(i), config);
+    if grain(i).age == 1            % babel dopiero powstal
+        AvCnt = 0;
+        newAverageNumOfPeopleShape = numS;
+        newAverageNumOfPeopleArea = numA; 
+    else                            % babel istnial juz jakis czas
+        % bierzemy i uzywamy prevID(1), bo jesli tutaj doszlismy, to znaczy, ze istnieje 1-szy element. Jezeli jest wiecej niz 1 elementow, to i tak zostanie to zweryfikowane w kolejnej petli
+        AvCnt = prevGrain(prevId(1)).AverageCnt;
+        %prevId(1)
+        newAverageNumOfPeopleShape = (AvCnt * prevGrain(prevId(1)).AverageNumOfPeopleShape + numS) / (AvCnt + 1);   % wyliczanie nowych œrednich wartoœci odpowiedzi z metod wspó³czynnikowej i na pole
+        newAverageNumOfPeopleArea  = (AvCnt * prevGrain(prevId(1)).AverageNumOfPeopleArea  + numA) / (AvCnt + 1);   
+    end
+    AvCnt = AvCnt + 1;
+    grain(i).ID = id;      %czyli to samo co 'i'
+    grain(i).PrevID = prevId;
+    grain(i).numOfPeopleShape = numS;
+    grain(i).numOfPeopleArea = numA;
+    grain(i).AverageCnt = AvCnt;
+    grain(i).AverageNumOfPeopleShape = newAverageNumOfPeopleShape;
+    grain(i).AverageNumOfPeopleArea  = newAverageNumOfPeopleArea;
+end
+
+%sprawdzamy dla kazdego babla czy w tej klatce nast¹pi³ dla niego "moment krytyczny" def. w
+%dokumentacji
+for i = 1:numOfActs
+    prevId = find(m_wspolnosci(:,i));
+    if length(prevId) > 1   %aktualny obiekt powstal jako sklejenie kliku obiktow, wiec nastapil "moment krytyczny"
+         grain(i).AverageCnt = 0;
+         grain(i).AverageNumOfPeopleShape = grain(i).numOfPeopleShape;
+         grain(i).AverageNumOfPeopleArea = grain(i).numOfPeopleArea;
+    else
+        %aktualny obietk nie powstal jako sklejenie przynajmniej dwoch obiektow, wiec
+        %sprawdzamy czy jego poprzednik sie podzielil
+        for z = 1: length(grain(i).PrevID)
+            cnt = 0;
+            for k = 1: length(grain)
+                for j = 1:length(grain(k).PrevID)
+                    if grain(i).PrevID(z) == grain(k).PrevID(j)
+                        cnt = cnt +1;
+                    end
+                end
+            end
+            if cnt > 1  %obiekt o ID=i powsta³ z b¹bla, który siê podzieli³
+                grain(i).AverageCnt = 0;
+                grain(i).AverageNumOfPeopleShape = grain(i).numOfPeopleShape;
+                grain(i).AverageNumOfPeopleArea = grain(i).numOfPeopleArea;
+            end
+        end
+    end
+end
+
+newGraindata = grain;
