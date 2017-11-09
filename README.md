@@ -1,8 +1,9 @@
 # Computer vision - people counting algorithm written in Matlab
 
-Developed as an university project in 2007 (AGH University of Science and Technology in Kraków, Poland) by Paweł Gutowski and Grzegorz Caban.
+Developed as university project in 2007 by Paweł Gutowski and Grzegorz Caban. 
+AGH University of Science and Technology, Kraków, Poland.
 
 Sample video produced by this code:
-[https://www.youtube.com/watch?v=TPjmsha6gWY]
+[https://youtu.be/TPjmsha6gWY]
 
 
